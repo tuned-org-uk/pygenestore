@@ -29,7 +29,7 @@ exclude = [
 
 
 [lib]
-name = "genegraph"
+name = "genestore"
 # "cdylib" is necessary to produce a shared library for Python to import from.
 #
 # Downstream Rust code (including code in `bin/`, `examples/`, and `tests/`) will not be able
@@ -38,10 +38,20 @@ name = "genegraph"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.27.1", features = ["extension-module"] }
+pyo3 = { version = "0.27.2", features = ["extension-module"] }
 numpy = "0.27.1"
 genegraph-storage = "0.2.0"
+pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+smartcore = "^0.4.8"
+log = "^0.4"
+env_logger = "0.11.8"
+
+[dev-dependencies]
+uuid = "1.19.0"
+tokio = { version = "1", features = ["full", "test-util"] }
+approx = "0.5"
 
 [build-dependencies]
-pyo3-build-config = "0.27.1"
+pyo3-build-config = "0.27.2"
 

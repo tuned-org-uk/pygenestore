@@ -1,4 +1,4 @@
-# pygenegraph
+# pygenestore
 
 Store your `numpy` arrays at scale using the Lance format.
 
@@ -6,10 +6,10 @@ Store your `numpy` arrays at scale using the Lance format.
 
 ```python
 import numpy as np
-import genegraph
+import genestore
 
 # Create a storage builder and configure it
-builder = genegraph.create_storage("./lance_data")
+builder = genestore.create_storage("./lance_data")
 builder.with_max_rows_per_file(500000)
 builder.with_compression("zstd")
 

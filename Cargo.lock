@@ -4449,13 +4449,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "pygenegraph"
+name = "pygenestore"
 version = "0.2.0"
 dependencies = [
+ "approx 0.5.1",
+ "env_logger",
  "genegraph-storage",
+ "log",
  "numpy",
  "pyo3",
+ "pyo3-async-runtimes",
  "pyo3-build-config",
+ "smartcore",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -4473,6 +4480,19 @@ dependencies = [
  "pyo3-ffi",
  "pyo3-macros",
  "unindent",
+]
+
+[[package]]
+name = "pyo3-async-runtimes"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57ddb5b570751e93cc6777e81fee8087e59cd53b5043292f2a6d59d5bd80fdfd"
+dependencies = [
+ "futures",
+ "once_cell",
+ "pin-project-lite",
+ "pyo3",
+ "tokio",
 ]
 
 [[package]]
@@ -5821,6 +5841,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
