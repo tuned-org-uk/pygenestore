@@ -21,6 +21,7 @@ exclude = [
     "*.bib",
     "*.cff",
     "test_data/*",
+    "lance_data/*",
     "examples/*",
     "tests/output",
     "tests/small_datasets",
@@ -47,10 +48,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 smartcore = "^0.4.8"
 log = "^0.4"
 env_logger = "0.11.8"
-ndarray = "0.17.1"
+uuid = { version = "1.19.0", features = ["v4"] }
+short-uuid = "0.2.0"
 
 [dev-dependencies]
-uuid = "1.19.0"
 tokio = { version = "1", features = ["full", "test-util"] }
 approx = "0.5"
 

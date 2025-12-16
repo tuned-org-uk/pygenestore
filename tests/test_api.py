@@ -21,7 +21,7 @@ async def test_basic():
     import genestore
 
     # Create a storage builder and configure it
-    builder = genestore.create_storage(f"./lance_data/{uuid.uuid4().hex}")
+    builder = genestore.store_array(f"./lance_data/{uuid.uuid4().hex}")
     builder.with_max_rows_per_file(500000)
     builder.with_compression("zstd")
 
@@ -64,15 +64,45 @@ async def test_basic():
     print("✓ All random element checks passed!")
 
 
+@pytest.mark.asyncio
+async def test_basic_double_store():
+    import genestore
+
+    # Create a storage builder and configure it
+    builder = genestore.store_array(f"./lance_data/{uuid.uuid4().hex}")
+    builder.with_max_rows_per_file(500000)
+    builder.with_compression("zstd")
+
+    # Build the storage instance
+    storage = builder.build()
+
+    # Create a numpy array (dense matrix)
+    np.random.seed(42)  # For reproducibility
+    data1 = np.random.randn(1000, 128).astype(np.float64)
+    data2 = np.random.randn(1000, 128).astype(np.float64)
+
+    # Store the array (await the async call)
+    path1 = await storage.store(data1, "my_dataset_1")
+    path2 = await storage.store(data2, "my_dataset_2")
+
+    # Load the array back using the NAME (not path)
+    loaded_data1 = await storage.load("my_dataset_1")
+    loaded_data2 = await storage.load("my_dataset_2")
+    print(f"Loaded shape: {loaded_data1.shape}")
+
+    assert path1 == path2
+    assert loaded_data1.shape == loaded_data2.shape == (1000, 128)
+
+
 def test_builder_creation_and_repr(out_dir):
-    builder = genestore.create_storage(out_dir)
+    builder = genestore.store_array(out_dir)
     r = repr(builder)
     assert "StorageBuilder" in r
     assert out_dir in r
 
 
 def test_builder_configuration_and_build(out_dir):
-    builder = genestore.create_storage(out_dir)
+    builder = genestore.store_array(out_dir)
     builder.with_max_rows_per_file(500_000)
     builder.with_max_rows_per_group(5_000)
     builder.with_compression("zstd")
@@ -89,7 +119,7 @@ def test_builder_configuration_and_build(out_dir):
 
 @pytest.mark.asyncio
 async def test_store_and_load_roundtrip(out_dir):
-    storage = genestore.create_storage(out_dir).build()
+    storage = genestore.store_array(out_dir).build()
 
     x = np.random.randn(64, 32).astype(np.float64)
     name = "roundtrip"
@@ -97,7 +127,7 @@ async def test_store_and_load_roundtrip(out_dir):
     path = await storage.store(x, name)
     assert isinstance(path, str)
 
-    y = await storage.load(name if LOAD_BY_KEY else path)
+    y = await storage.load(name)
     assert isinstance(y, np.ndarray)
     assert y.shape == x.shape
     assert np.allclose(x, y)
@@ -105,7 +135,7 @@ async def test_store_and_load_roundtrip(out_dir):
 
 @pytest.mark.asyncio
 async def test_store_rejects_empty_array(out_dir):
-    storage = genestore.create_storage(out_dir).build()
+    storage = genestore.store_array(out_dir).build()
 
     x = np.zeros((0, 0), dtype=np.float64)
 
@@ -118,7 +148,7 @@ async def test_store_rejects_empty_array(out_dir):
 
 @pytest.mark.asyncio
 async def test_store_rejects_non_finite(out_dir):
-    storage = genestore.create_storage(out_dir).build()
+    storage = genestore.store_array(out_dir).build()
 
     x = np.random.randn(10, 10).astype(np.float64)
     x[0, 0] = np.nan
@@ -132,57 +162,26 @@ async def test_store_rejects_non_finite(out_dir):
 
 
 @pytest.mark.asyncio
-async def test_store_batch_roundtrip(out_dir):
-    storage = genestore.create_storage(out_dir).build()
-
-    xs = [np.random.randn(20, 8).astype(np.float64) for _ in range(3)]
-    names = ["b1", "b2", "b3"]
-
-    paths = await storage.store_batch(xs, names)
-    assert isinstance(paths, list)
-    assert len(paths) == 3
-    assert all(isinstance(p, str) for p in paths)
-    assert all(os.path.exists(p) for p in paths)
-
-    # Load back and compare
-    for x, name, path in zip(xs, names, paths):
-        y = await storage.load(name if LOAD_BY_KEY else path)
-        assert isinstance(y, np.ndarray)
-        assert y.shape == x.shape
-        assert np.allclose(x, y)
-
-
-@pytest.mark.asyncio
-async def test_store_batch_length_mismatch(out_dir):
-    storage = genestore.create_storage(out_dir).build()
-
-    xs = [np.random.randn(5, 3).astype(np.float64) for _ in range(2)]
-    names = ["only_one_name"]
-
-    with pytest.raises(Exception) as e:
-        await storage.store_batch(xs, names)
-
-    assert "match" in str(e.value).lower()
-
-
-@pytest.mark.asyncio
 async def test_multiple_instances_isolated(out_dir):
     # Two independent storage instances writing into same base but different names.
     # This should work if your backend partitions by name_id internally.
-    s1 = genestore.create_storage(out_dir).build()
-    s2 = genestore.create_storage(out_dir).build()
+    s1 = genestore.store_array(out_dir).build()
 
     x1 = np.random.randn(8, 4).astype(np.float64)
     x2 = np.random.randn(8, 4).astype(np.float64)
 
-    p1 = await s1.store(x1, "m1")
-    p2 = await s2.store(x2, "m2")
+    print(f"{x1} \n {x2}")
 
+    p1 = await s1.store(x1, "m1")
+    p2 = await s1.store(x2, "m2")
+
+    assert p1 == p2
     assert os.path.exists(p1)
-    assert os.path.exists(p2)
 
     y1 = await s1.load("m1")
-    y2 = await s2.load("m2")
+    y2 = await s1.load("m2")
 
-    assert np.allclose(x1, y1)
-    assert np.allclose(x2, y2)
+    print(f"{y1} \n {y2}")
+
+    assert np.array_equal(x1, y1)
+    assert np.array_equal(x2, y2)

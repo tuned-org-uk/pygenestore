@@ -10,8 +10,8 @@ use smartcore::linalg::basic::arrays::Array;
 use genegraph_storage::traits::backend::StorageBackend;
 use genegraph_storage::traits::metadata::Metadata;
 use genegraph_storage::metadata::GeneMetadata;
-
-
+use short_uuid::ShortUuid;
+use log::{info, debug};
 
 use std::sync::Once;
 static INIT: Once = Once::new();
@@ -19,7 +19,7 @@ static INIT: Once = Once::new();
 /// Initialize logging for tests
 pub fn init() {
     INIT.call_once(|| {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
             .try_init()
             .ok();
     });
@@ -138,28 +138,26 @@ impl LanceStorage {
         let shape = array_view.shape();
         let rows = shape[0];
         let cols = shape[1];
-        
+
         if rows == 0 || cols == 0 {
             return Err(PyValueError::new_err(
                 "Cannot store empty array. Array must have non-zero dimensions."
             ));
         }
-        
+
         let has_non_finite = array_view.iter().any(|&v| !v.is_finite());
-        
         if has_non_finite {
             let non_finite_count = array_view.iter().filter(|&&v| !v.is_finite()).count();
             let nan_count = array_view.iter().filter(|&&v| v.is_nan()).count();
             let inf_count = array_view.iter().filter(|&&v| v.is_infinite()).count();
-            
             return Err(PyValueError::new_err(format!(
                 "Array contains {} non-finite values ({} NaN, {} Inf/-Inf). \
-                 Only arrays with finite values can be stored as embeddings. \
-                 Please clean your data before storing.",
+                Only arrays with finite values can be stored as embeddings. \
+                Please clean your data before storing.",
                 non_finite_count, nan_count, inf_count
             )));
         }
-        
+
         // Convert numpy row-major to column-major (smartcore/genegraph-storage convention)
         let mut data_col_major: Vec<f64> = vec![0.0; rows * cols];
         for r in 0..rows {
@@ -168,30 +166,76 @@ impl LanceStorage {
                 data_col_major[col_major_idx] = array_view[[r, c]];
             }
         }
-        
+
         let output_dir = self.output_dir.clone();
         
         // Return a Python awaitable
         future_into_py(py, async move {
-            let storage = LanceStorageGraph::new(
-                output_dir.to_string_lossy().to_string(),
-                name.clone(),
-            );
-            
+            let mut new_storage = true;
+
+            let (check_exist, _) = LanceStorageGraph::exists(&output_dir.to_string_lossy().to_string());
+            let (storage, mut metadata)  = if !check_exist { 
+                info!("creating new storage at {:?}", output_dir);
+                // new storage
+                let storage = LanceStorageGraph::new(
+                    output_dir.to_string_lossy().to_string(),
+                    name.to_string(),
+                );
+                let md = GeneMetadata::seed_metadata(&name, rows, cols, &storage)
+                    .await
+                    .unwrap();
+
+                (storage, md)
+            } else {
+                // spawn storage
+                info!("spawning storage at {:?}", output_dir);
+                new_storage = false;
+                LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
+                    .await
+                    .map_err(|e| PyException::new_err(format!("Failed to spawn storage (metadata missing?): {}", e)))?
+            };
+
             // Data is now in column-major format
             let matrix = DenseMatrix::new(rows, cols, data_col_major, true)
                 .map_err(|e| PyException::new_err(format!("Failed to create DenseMatrix: {}", e)))?;
-            
+
             let metadata_path = storage.metadata_path();
-            let md = GeneMetadata::seed_metadata(&name, rows, cols, &storage.clone())
-                .await
-                .unwrap();
             
-            storage.save_dense("rawinput", &matrix, &metadata_path).await
-                .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
+            let metadata = if new_storage {               
+                // Save the dense matrix
+                storage.save_dense("rawinput", &matrix, &metadata_path).await
+                    .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
             
-            let path = output_dir.join(format!("{}_data.lance", name));
-            Ok(path.to_string_lossy().to_string())
+                metadata
+            } else {
+                // Add file info to metadata
+                metadata.files.insert(
+                    name.to_string(),
+                    metadata.new_fileinfo(
+                        &name,
+                        "dense",  // filetype
+                        matrix.shape(),
+                        None,
+                        None,
+                    ),
+                );
+                
+                {
+                    // Save updated metadata
+                    storage.save_metadata(&metadata).await
+                        .map_err(|e| PyException::new_err(format!("Failed to save metadata: {}", e)))?;
+
+                    // Save the dense matrix
+                    storage.save_dense(&name, &matrix, &metadata_path).await
+                        .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
+                }
+
+                storage.load_metadata().await
+                    .map_err(|e| PyException::new_err(format!("Failed to load existing metadata: {}", e)))?
+            };
+
+
+            Ok(metadata_path.to_string_lossy().to_string())
         })
     }
 
@@ -216,13 +260,19 @@ impl LanceStorage {
         
         future_into_py(py, async move {
             // Use spawn to read metadata and initialize storage from existing directory
-            let (storage, _metadata) = LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
+            let (storage, metadata) = LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
                 .await
                 .map_err(|e| PyException::new_err(format!("Failed to spawn storage (metadata missing?): {}", e)))?;
             
-            // Load the dense matrix using the dataset name
-            let matrix = storage.load_dense("rawinput").await
-                .map_err(|e| PyException::new_err(format!("Failed to load dense matrix '{}': {}", name, e)))?;
+            // Load the dense matrix using the dataset name or load the root rawinput
+            // TODO: use map_error and return an error
+            let (fileinfo, key) = if metadata.files.get(&name).is_some() {
+                (metadata.files.get(&name).unwrap(), name.clone())
+            } else {
+                   (metadata.files.get("rawinput").unwrap(), "rawinput".to_string()) 
+            };
+            let matrix = storage.load_dense(&key).await
+                .map_err(|e| PyException::new_err(format!("Failed to load dense matrix '{}': {}", &key, e)))?;
             
             let (rows, cols) = matrix.shape();
             
@@ -246,86 +296,6 @@ impl LanceStorage {
                     .map(|arr| arr.into_any().unbind())
                     .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))
             })
-        })
-    }
-
-    /// Store a batch of numpy arrays to Lance format (async)
-    #[pyo3(signature = (arrays, names))]
-    fn store_batch<'py>(
-        &self,
-        py: Python<'py>,
-        arrays: Vec<PyReadonlyArray2<'py, f64>>,
-        names: Vec<String>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        if arrays.len() != names.len() {
-            return Err(PyValueError::new_err(
-                "Number of arrays must match number of names",
-            ));
-        }
-
-        // Clone needed fields from self to avoid lifetime issues
-        let output_dir = self.output_dir.clone();
-        
-        // Validate and extract all arrays upfront
-        let mut batch_data = Vec::with_capacity(arrays.len());
-        for (arr, name) in arrays.into_iter().zip(names.iter()) {
-            let view = arr.as_array();
-            let shape = view.shape();
-            let rows = shape[0];
-            let cols = shape[1];
-
-            if rows == 0 || cols == 0 {
-                return Err(PyValueError::new_err(
-                    "Cannot store empty array in batch.",
-                ));
-            }
-            
-            if view.iter().any(|&v| !v.is_finite()) {
-                return Err(PyValueError::new_err(
-                    "Batch contains non-finite values.",
-                ));
-            }
-
-            // Convert to column-major
-            let mut data_col_major = vec![0.0; rows * cols];
-            for r in 0..rows {
-                for c in 0..cols {
-                    data_col_major[c * rows + r] = view[[r, c]];
-                }
-            }
-            
-            batch_data.push((name.clone(), rows, cols, data_col_major));
-        }
-
-        future_into_py(py, async move {
-            let mut paths = Vec::new();
-            
-            for (name, rows, cols, data) in batch_data {
-                let path = output_dir.join(format!("{}.lance", name));
-                
-                let storage = LanceStorageGraph::new(
-                    output_dir.to_string_lossy().to_string(),
-                    name.clone(),
-                );
-
-                let matrix = DenseMatrix::new(rows, cols, data, true)
-                    .map_err(|e| PyException::new_err(format!("Failed to create DenseMatrix: {}", e)))?;
-
-                let md_path = storage.metadata_path();
-                if !md_path.exists() {
-                    use genegraph_storage::metadata::GeneMetadata;
-                    let md = GeneMetadata::new(&name);
-                    storage.save_metadata(&md).await
-                        .map_err(|e| PyException::new_err(format!("Failed to save metadata: {}", e)))?;
-                }
-
-                storage.save_dense(&name, &matrix, &md_path).await
-                    .map_err(|e| PyException::new_err(format!("Failed to save dense: {}", e)))?;
-
-                paths.push(path.to_string_lossy().to_string());
-            }
-            
-            Ok(paths)
         })
     }
 
@@ -359,10 +329,11 @@ fn genestore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Module version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
-    // Convenience function to create a storage builder
+    /// Each directory is a separate storage.
+    /// If the same directory is passed, arrays are stored in the same storage
     #[pyfn(m)]
-    #[pyo3(name = "create_storage")]
-    fn create_storage(output_dir: String) -> PyResult<StorageBuilder> {
+    #[pyo3(name = "store_array")]
+    fn store_array(output_dir: String) -> PyResult<StorageBuilder> {
         Ok(StorageBuilder::new(output_dir, None, None, None))
     }
 

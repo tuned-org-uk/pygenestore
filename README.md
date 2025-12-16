@@ -9,7 +9,7 @@ import numpy as np
 import genestore
 
 # Create a storage builder and configure it
-builder = genestore.create_storage("./lance_data")
+builder = genestore.store_array("./lance_data")
 builder.with_max_rows_per_file(500000)
 builder.with_compression("zstd")
 
