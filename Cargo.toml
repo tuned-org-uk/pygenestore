@@ -1,0 +1,47 @@
+[package]
+name = "pygenegraph"
+version = "0.2.0"
+edition = "2024"
+description = "Numpy arrays to Lance storage format"
+authors = ["Lorenzo <tunedconsulting@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tuned-org-uk/pygenegraph"
+homepage = "https://github.com/tuned-org-uk/pygenegraph"
+documentation = "https://github.com/tuned-org-uk/pygenegraph"
+readme = "README.md"
+keywords = ["graph-data", "storage", "lance", "machine-learning"]
+categories = ["algorithms", "mathematics", "science"]
+exclude = [
+    "target/*",
+    "Cargo.lock",
+    ".git/*",
+    ".github/*",
+    "*.tmp",
+    "*.md",
+    "*.bib",
+    "*.cff",
+    "test_data/*",
+    "examples/*",
+    "tests/output",
+    "tests/small_datasets",
+    "visualization_output",
+]
+
+
+[lib]
+name = "genegraph"
+# "cdylib" is necessary to produce a shared library for Python to import from.
+#
+# Downstream Rust code (including code in `bin/`, `examples/`, and `tests/`) will not be able
+# to `use arrowspace;` unless the "rlib" or "lib" crate type is also included, e.g.:
+# crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+genegraph-storage = "0.2.0"
+
+[build-dependencies]
+pyo3-build-config = "0.22"
+

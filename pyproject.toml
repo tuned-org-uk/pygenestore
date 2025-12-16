@@ -1,0 +1,48 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "arrowspace"
+readme = "README.md"
+description = "Python bindings for ArrowSpace (Rust) providing graph-based similarity search, signal graphs, and spectral methods for vector data."
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+keywords = ["vector-search", "spectral-analysis", "graph-signal", "similarity-search", "machine-learning"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Database :: Front-Ends",  # for vector DB/search integrations
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",  # valid trove classifier via trove-classifiers set
+    "Operating System :: OS Independent",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/tuned-org-uk/pygenegraph"
+Repository = "https://github.com/tuned-org-uk/pygenegraph.git"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
+exclude = [
+    "tests/",           # Exclude the entire 'tests' directory
+    ".github/",            # Exclude the 'docs' directory
+    "**/*.pyc",         # Exclude all compiled Python files
+    "*.md",
+    ".gitignore"
+]
