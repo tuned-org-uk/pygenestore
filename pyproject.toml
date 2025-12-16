@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "genestore"
 readme = "README.md"
-description = "Python bindings for ArrowSpace (Rust) providing graph-based similarity search, signal graphs, and spectral methods for vector data."
+description = "Python bindings for genegraph-storage. Store your numpy data in Lance format"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
