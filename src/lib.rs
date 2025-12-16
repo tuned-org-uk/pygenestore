@@ -1,3 +1,4 @@
+#![allow(unused_variables)]
 use numpy::{PyArray2, PyArrayMethods, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::exceptions::PyException;
@@ -108,33 +109,45 @@ impl LanceStorage {
     fn store<'py>(
         &self,
         py: Python<'py>,
-        array: PyReadonlyArray2<f64>,
+        array: PyReadonlyArray2<'py, f64>,
         name: String,
     ) -> PyResult<String> {
-        // Release GIL during computation
-        py.allow_threads(|| {
-            // Convert numpy array to ndarray view
-            let array_view = array.as_array();
-            let shape = array_view.shape();
-            let rows = shape[0];
-            let cols = shape[1];
-
+        // Extract data we need before releasing GIL
+        let array_view = array.as_array();
+        let shape = array_view.shape();
+        let rows = shape[0];
+        let cols = shape[1];
+        
+        // Convert to owned data (Vec) so we can safely pass to another thread
+        let data: Vec<f64> = array_view.iter().copied().collect();
+        
+        // Now release GIL and do computation
+        let output_dir = self.output_dir.clone();
+        let max_rows_per_file = self.max_rows_per_file;
+        let max_rows_per_group = self.max_rows_per_group;
+        let compression = self.compression.clone();
+        
+        let output_path = py.allow_threads(move || {
             // Construct output path
-            let output_path = self.output_dir.join(format!("{}.lance", name));
+            let path = output_dir.join(format!("{}.lance", name));
 
             // TODO: Use genegraph-storage crate to write to Lance format
             // This is a placeholder for the actual implementation
             // You would call genegraph-storage methods here like:
             // 
             // use genegraph_storage::lance::LanceWriter;
-            // let mut writer = LanceWriter::new(&output_path, self.max_rows_per_file)?;
-            // writer.write_dense_matrix(array_view)?;
+            // let mut writer = LanceWriter::new(&path, max_rows_per_file)?;
+            // writer.set_compression(&compression)?;
+            // writer.set_max_rows_per_group(max_rows_per_group)?;
+            // writer.write_dense_matrix(&data, rows, cols)?;
             // writer.close()?;
 
-            // For now, we return a success message
+            // For now, we return the path
             // Replace this with actual genegraph-storage implementation
-            Ok(output_path.to_string_lossy().to_string())
-        })
+            Ok::<_, PyErr>(path)
+        })?;
+
+        Ok(output_path.to_string_lossy().to_string())
     }
 
     /// Load a Lance dataset into a numpy array
@@ -155,37 +168,71 @@ impl LanceStorage {
         path: String,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         // Release GIL during I/O
-        let data = py.allow_threads(|| {
-            let lance_path = PathBuf::from(&path);
-
+        let lance_path = PathBuf::from(&path);
+        
+        let (flat_data, rows, cols) = py.allow_threads(move || {
             // TODO: Use genegraph-storage crate to read from Lance format
             // This is a placeholder for the actual implementation
             // 
             // use genegraph_storage::lance::LanceReader;
             // let reader = LanceReader::open(&lance_path)?;
-            // let array = reader.read_dense_matrix()?;
-            // Ok(array)
+            // let (data, rows, cols) = reader.read_dense_matrix()?;
+            // Ok::<_, PyErr>((data, rows, cols))
 
             // Placeholder: return dummy data
             // Replace with actual genegraph-storage implementation
             let rows = 10;
             let cols = 5;
             let data: Vec<f64> = vec![0.0; rows * cols];
-            Ok((data, rows, cols))
+            Ok::<_, PyErr>((data, rows, cols))
         })?;
 
-        // Convert to numpy array
-        let (flat_data, rows, cols) = data;
-        let array = PyArray2::from_vec2_bound(
-            py,
-            &flat_data
-                .chunks(cols)
-                .map(|chunk| chunk.to_vec())
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))?;
+        // Convert flat data to 2D vec
+        let vec2d: Vec<Vec<f64>> = flat_data
+            .chunks(cols)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        // Create numpy array using the bounded interface
+        let array = PyArray2::from_vec2(py, &vec2d)
+            .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))?;
 
         Ok(array)
+    }
+
+    /// Store a batch of numpy arrays to Lance format
+    /// 
+    /// Parameters
+    /// ----------
+    /// arrays : list[numpy.ndarray]
+    ///     List of 2D numpy arrays to store
+    /// names : list[str]
+    ///     Names for each dataset
+    /// 
+    /// Returns
+    /// -------
+    /// list[str]
+    ///     Paths to the stored Lance datasets
+    #[pyo3(signature = (arrays, names))]
+    fn store_batch<'py>(
+        &self,
+        py: Python<'py>,
+        arrays: Vec<PyReadonlyArray2<'py, f64>>,
+        names: Vec<String>,
+    ) -> PyResult<Vec<String>> {
+        if arrays.len() != names.len() {
+            return Err(PyException::new_err(
+                "Number of arrays must match number of names"
+            ));
+        }
+
+        let mut results = Vec::new();
+        for (array, name) in arrays.iter().zip(names.iter()) {
+            let path = self.store(py, array.clone(), name.clone())?;
+            results.push(path);
+        }
+
+        Ok(results)
     }
 
     /// Get storage configuration information
@@ -199,6 +246,11 @@ impl LanceStorage {
         ))
     }
 
+    /// Get the output directory path
+    fn get_output_dir(&self) -> String {
+        self.output_dir.to_string_lossy().to_string()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "LanceStorage(output_dir='{}')",
@@ -209,10 +261,12 @@ impl LanceStorage {
 
 /// Python module definition
 #[pymodule]
-#[pyo3(name = "genegraph")]
-fn genegraph_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn genegraph(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StorageBuilder>()?;
     m.add_class::<LanceStorage>()?;
+
+    // Module version
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     // Convenience function to create a storage builder
     #[pyfn(m)]

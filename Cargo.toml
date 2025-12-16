@@ -1,13 +1,13 @@
 [package]
-name = "pygenegraph"
+name = "pygenestore"
 version = "0.2.0"
 edition = "2024"
 description = "Numpy arrays to Lance storage format"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/tuned-org-uk/pygenegraph"
-homepage = "https://github.com/tuned-org-uk/pygenegraph"
-documentation = "https://github.com/tuned-org-uk/pygenegraph"
+repository = "https://github.com/tuned-org-uk/pygenestore"
+homepage = "https://github.com/tuned-org-uk/pygenestore"
+documentation = "https://github.com/tuned-org-uk/pygenestore"
 readme = "README.md"
 keywords = ["graph-data", "storage", "lance", "machine-learning"]
 categories = ["algorithms", "mathematics", "science"]
@@ -38,10 +38,10 @@ name = "genegraph"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module"] }
-numpy = "0.22"
+pyo3 = { version = "0.27.1", features = ["extension-module"] }
+numpy = "0.27.1"
 genegraph-storage = "0.2.0"
 
 [build-dependencies]
-pyo3-build-config = "0.22"
+pyo3-build-config = "0.27.1"
 

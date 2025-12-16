@@ -3,7 +3,7 @@ requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "arrowspace"
+name = "genestore"
 readme = "README.md"
 description = "Python bindings for ArrowSpace (Rust) providing graph-based similarity search, signal graphs, and spectral methods for vector data."
 license = "MIT OR Apache-2.0"
@@ -33,8 +33,8 @@ classifiers = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/tuned-org-uk/pygenegraph"
-Repository = "https://github.com/tuned-org-uk/pygenegraph.git"
+Homepage = "https://github.com/tuned-org-uk/pygenestore"
+Repository = "https://github.com/tuned-org-uk/pygenestore.git"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
