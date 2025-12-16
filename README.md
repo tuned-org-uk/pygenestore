@@ -7,25 +7,36 @@ Store your `numpy` arrays at scale using the Lance format.
 ```python
 import numpy as np
 import genestore
+import asyncio
 
-# Create a storage builder and configure it
-builder = genestore.store_array("./lance_data")
-builder.with_max_rows_per_file(500000)
-builder.with_compression("zstd")
+async def main():
+    # Create a storage builder and configure it
+    builder = genestore.create_storage(f"./lance_data")
+    builder.with_max_rows_per_file(500000)
+    builder.with_compression("zstd")
 
-# Build the storage instance
-storage = builder.build()
+    # Build the storage instance
+    storage = builder.build()
 
-# Create a numpy array (dense matrix)
-data = np.random.randn(1000, 128).astype(np.float64)
+    # Create a numpy array (dense matrix)
+    np.random.seed(42)  # For reproducibility
+    data = np.random.randn(1000, 128).astype(np.float64)
 
-# Store the array
-path = storage.store(data, "my_dataset")
-print(f"Stored at: {path}")
+    # Store the array (await the async call)
+    path = await storage.store(data, "my_dataset")
+    print(f"Storage at: {path}")
 
-# Load the array back
-loaded_data = storage.load(path)
-print(f"Loaded shape: {loaded_data.shape}")
+    # Load the array back using the NAME (not path)
+    loaded_data = await storage.load("my_dataset")
+    print(f"Loaded shape: {loaded_data.shape}")
+
+    # Verify the data
+    assert np.allclose(data, loaded_data)
+    print("✓ Data verification passed!")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 
 ## Tests
