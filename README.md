@@ -27,3 +27,11 @@ print(f"Stored at: {path}")
 loaded_data = storage.load(path)
 print(f"Loaded shape: {loaded_data.shape}")
 ```
+
+## Tests
+
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/
+```

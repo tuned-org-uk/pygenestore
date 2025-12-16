@@ -25,6 +25,7 @@ exclude = [
     "tests/output",
     "tests/small_datasets",
     "visualization_output",
+    "tests/"
 ]
 
 
@@ -46,6 +47,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 smartcore = "^0.4.8"
 log = "^0.4"
 env_logger = "0.11.8"
+ndarray = "0.17.1"
 
 [dev-dependencies]
 uuid = "1.19.0"

@@ -1,16 +1,16 @@
 #![allow(unused_variables)]
-use numpy::{PyArray2, PyArrayMethods, PyReadonlyArray2};
+use numpy::{PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyException, PyValueError};
+use pyo3_async_runtimes::tokio::future_into_py;
 use std::path::PathBuf;
 use genegraph_storage::lance_storage_graph::LanceStorageGraph;
 use smartcore::linalg::basic::matrix::DenseMatrix;
+use smartcore::linalg::basic::arrays::Array;
 use genegraph_storage::traits::backend::StorageBackend;
 use genegraph_storage::traits::metadata::Metadata;
+use genegraph_storage::metadata::GeneMetadata;
 
-
-#[cfg(test)]
-mod tests;
 
 
 use std::sync::Once;
@@ -113,7 +113,7 @@ pub struct LanceStorage {
 
 #[pymethods]
 impl LanceStorage {
-    /// Store a numpy array to Lance format
+   /// Store a numpy array to Lance format (async)
     /// 
     /// Parameters
     /// ----------
@@ -125,38 +125,29 @@ impl LanceStorage {
     /// Returns
     /// -------
     /// str
-    ///     Path to the stored Lance dataset
-    /// 
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If the array contains non-finite values (NaN, Inf, -Inf)
+    ///     Path to the stored Lance dataset (awaitable)
     #[pyo3(signature = (array, name))]
     fn store<'py>(
         &self,
         py: Python<'py>,
         array: PyReadonlyArray2<'py, f64>,
         name: String,
-    ) -> PyResult<String> {
-        // Extract data we need before releasing GIL
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Validate and extract data BEFORE entering the async block
         let array_view = array.as_array();
         let shape = array_view.shape();
         let rows = shape[0];
         let cols = shape[1];
         
-        // Validate dimensions
         if rows == 0 || cols == 0 {
             return Err(PyValueError::new_err(
                 "Cannot store empty array. Array must have non-zero dimensions."
             ));
         }
         
-        // Step 1: Efficiently check for non-finite values
-        // Use iterator to enable early termination on first non-finite value
         let has_non_finite = array_view.iter().any(|&v| !v.is_finite());
         
         if has_non_finite {
-            // Count total non-finite values for detailed error message
             let non_finite_count = array_view.iter().filter(|&&v| !v.is_finite()).count();
             let nan_count = array_view.iter().filter(|&&v| v.is_nan()).count();
             let inf_count = array_view.iter().filter(|&&v| v.is_infinite()).count();
@@ -169,143 +160,176 @@ impl LanceStorage {
             )));
         }
         
-        // Step 2: Convert to owned data (Vec) so we can safely pass to another thread
-        let data: Vec<f64> = array_view.iter().copied().collect();
+        // Convert numpy row-major to column-major (smartcore/genegraph-storage convention)
+        let mut data_col_major: Vec<f64> = vec![0.0; rows * cols];
+        for r in 0..rows {
+            for c in 0..cols {
+                let col_major_idx = c * rows + r;
+                data_col_major[col_major_idx] = array_view[[r, c]];
+            }
+        }
         
-        // Step 3: Now release GIL and do async computation
         let output_dir = self.output_dir.clone();
-        let compression = self.compression.clone();
         
-        let output_path = py.detach(move || {
-            // Use tokio runtime for async operations (required by genegraph-storage)
-            let runtime = tokio::runtime::Runtime::new()
-                .map_err(|e| PyException::new_err(format!("Failed to create runtime: {}", e)))?;
+        // Return a Python awaitable
+        future_into_py(py, async move {
+            let storage = LanceStorageGraph::new(
+                output_dir.to_string_lossy().to_string(),
+                name.clone(),
+            );
             
-            runtime.block_on(async move {
-                // Construct output path
-                let path = output_dir.join(format!("{}.lance", name));
-                
-                // Create LanceStorageGraph instance
-                let storage = LanceStorageGraph::new(
-                    output_dir.to_string_lossy().to_string(),
-                    name.clone(),
-                );
-                
-                // Convert Vec<f64> to DenseMatrix (column-major format for smartcore)
-                // genegraph-storage expects column-major DenseMatrix
-                let matrix = DenseMatrix::new(rows, cols, data, true)
-                    .map_err(|e| PyException::new_err(format!("Failed to create DenseMatrix: {}", e)))?;
-                
-                // Create a minimal metadata file (required by genegraph-storage)
-                let metadata_path = storage.metadata_path();
-                if !metadata_path.exists() {
-                    use genegraph_storage::metadata::GeneMetadata;
-                    
-                    let metadata = GeneMetadata::new(
-                        &name
-                    );
-                    
-                    storage.save_metadata(&metadata).await
-                        .map_err(|e| PyException::new_err(format!("Failed to save metadata: {}", e)))?;
-                }
-                
-                // Use genegraph-storage to write to Lance format
-                storage.save_dense(&name, &matrix, &metadata_path).await
-                    .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
-                
-                Ok::<_, PyErr>(path)
-            })
-        })?;
-
-        Ok(output_path.to_string_lossy().to_string())
+            // Data is now in column-major format
+            let matrix = DenseMatrix::new(rows, cols, data_col_major, true)
+                .map_err(|e| PyException::new_err(format!("Failed to create DenseMatrix: {}", e)))?;
+            
+            let metadata_path = storage.metadata_path();
+            let md = GeneMetadata::seed_metadata(&name, rows, cols, &storage.clone())
+                .await
+                .unwrap();
+            
+            storage.save_dense("rawinput", &matrix, &metadata_path).await
+                .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
+            
+            let path = output_dir.join(format!("{}_data.lance", name));
+            Ok(path.to_string_lossy().to_string())
+        })
     }
 
-    /// Load a Lance dataset into a numpy array
+    /// Load a Lance dataset into a numpy array (async)
     /// 
     /// Parameters
     /// ----------
-    /// path : str
-    ///     Path to the Lance dataset file
+    /// name : str
+    ///     Name of the dataset (same as used in store())
     /// 
     /// Returns
     /// -------
     /// numpy.ndarray
-    ///     2D numpy array containing the loaded data
-    #[pyo3(signature = (path))]
+    ///     2D numpy array containing the loaded data (awaitable)
+    #[pyo3(signature = (name))]
     fn load<'py>(
         &self,
         py: Python<'py>,
-        path: String,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        // Release GIL during I/O
-        let lance_path = PathBuf::from(&path);
+        name: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let output_dir = self.output_dir.clone();
         
-        let (flat_data, rows, cols) = py.detach(move || {
-            // TODO: Use genegraph-storage crate to read from Lance format
-            // This is a placeholder for the actual implementation
-            // 
-            // use genegraph_storage::lance::LanceReader;
-            // let reader = LanceReader::open(&lance_path)?;
-            // let (data, rows, cols) = reader.read_dense_matrix()?;
-            // Ok::<_, PyErr>((data, rows, cols))
-
-            // Placeholder: return dummy data
-            // Replace with actual genegraph-storage implementation
-            let rows = 10;
-            let cols = 5;
-            let data: Vec<f64> = vec![0.0; rows * cols];
-            Ok::<_, PyErr>((data, rows, cols))
-        })?;
-
-        // Convert flat data to 2D vec
-        let vec2d: Vec<Vec<f64>> = flat_data
-            .chunks(cols)
-            .map(|chunk| chunk.to_vec())
-            .collect();
-
-        // Create numpy array using the bounded interface
-        let array = PyArray2::from_vec2(py, &vec2d)
-            .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))?;
-
-        Ok(array)
+        future_into_py(py, async move {
+            // Use spawn to read metadata and initialize storage from existing directory
+            let (storage, _metadata) = LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
+                .await
+                .map_err(|e| PyException::new_err(format!("Failed to spawn storage (metadata missing?): {}", e)))?;
+            
+            // Load the dense matrix using the dataset name
+            let matrix = storage.load_dense("rawinput").await
+                .map_err(|e| PyException::new_err(format!("Failed to load dense matrix '{}': {}", name, e)))?;
+            
+            let (rows, cols) = matrix.shape();
+            
+            // Extract in row-major order for numpy
+            let mut flat_row_major = Vec::with_capacity(rows * cols);
+            for r in 0..rows {
+                for c in 0..cols {
+                    flat_row_major.push(*matrix.get((r, c)));
+                }
+            }
+            
+            // Convert to 2D vec
+            let vec2d: Vec<Vec<f64>> = flat_row_major
+                .chunks(cols)
+                .map(|chunk| chunk.to_vec())
+                .collect();
+            
+            // Create numpy array (must be done inside GIL)
+            Python::attach(|py| {
+                PyArray2::from_vec2(py, &vec2d)
+                    .map(|arr| arr.into_any().unbind())
+                    .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))
+            })
+        })
     }
 
-    /// Store a batch of numpy arrays to Lance format
-    /// 
-    /// Parameters
-    /// ----------
-    /// arrays : list[numpy.ndarray]
-    ///     List of 2D numpy arrays to store
-    /// names : list[str]
-    ///     Names for each dataset
-    /// 
-    /// Returns
-    /// -------
-    /// list[str]
-    ///     Paths to the stored Lance datasets
+    /// Store a batch of numpy arrays to Lance format (async)
     #[pyo3(signature = (arrays, names))]
     fn store_batch<'py>(
         &self,
         py: Python<'py>,
         arrays: Vec<PyReadonlyArray2<'py, f64>>,
         names: Vec<String>,
-    ) -> PyResult<Vec<String>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         if arrays.len() != names.len() {
-            return Err(PyException::new_err(
-                "Number of arrays must match number of names"
+            return Err(PyValueError::new_err(
+                "Number of arrays must match number of names",
             ));
         }
 
-        let mut results = Vec::new();
-        for (array, name) in arrays.iter().zip(names.iter()) {
-            let path = self.store(py, array.clone(), name.clone())?;
-            results.push(path);
+        // Clone needed fields from self to avoid lifetime issues
+        let output_dir = self.output_dir.clone();
+        
+        // Validate and extract all arrays upfront
+        let mut batch_data = Vec::with_capacity(arrays.len());
+        for (arr, name) in arrays.into_iter().zip(names.iter()) {
+            let view = arr.as_array();
+            let shape = view.shape();
+            let rows = shape[0];
+            let cols = shape[1];
+
+            if rows == 0 || cols == 0 {
+                return Err(PyValueError::new_err(
+                    "Cannot store empty array in batch.",
+                ));
+            }
+            
+            if view.iter().any(|&v| !v.is_finite()) {
+                return Err(PyValueError::new_err(
+                    "Batch contains non-finite values.",
+                ));
+            }
+
+            // Convert to column-major
+            let mut data_col_major = vec![0.0; rows * cols];
+            for r in 0..rows {
+                for c in 0..cols {
+                    data_col_major[c * rows + r] = view[[r, c]];
+                }
+            }
+            
+            batch_data.push((name.clone(), rows, cols, data_col_major));
         }
 
-        Ok(results)
+        future_into_py(py, async move {
+            let mut paths = Vec::new();
+            
+            for (name, rows, cols, data) in batch_data {
+                let path = output_dir.join(format!("{}.lance", name));
+                
+                let storage = LanceStorageGraph::new(
+                    output_dir.to_string_lossy().to_string(),
+                    name.clone(),
+                );
+
+                let matrix = DenseMatrix::new(rows, cols, data, true)
+                    .map_err(|e| PyException::new_err(format!("Failed to create DenseMatrix: {}", e)))?;
+
+                let md_path = storage.metadata_path();
+                if !md_path.exists() {
+                    use genegraph_storage::metadata::GeneMetadata;
+                    let md = GeneMetadata::new(&name);
+                    storage.save_metadata(&md).await
+                        .map_err(|e| PyException::new_err(format!("Failed to save metadata: {}", e)))?;
+                }
+
+                storage.save_dense(&name, &matrix, &md_path).await
+                    .map_err(|e| PyException::new_err(format!("Failed to save dense: {}", e)))?;
+
+                paths.push(path.to_string_lossy().to_string());
+            }
+            
+            Ok(paths)
+        })
     }
 
-    /// Get storage configuration information
+    // Keep the synchronous helper methods
     fn get_config(&self) -> PyResult<String> {
         Ok(format!(
             "LanceStorage(output_dir='{}', max_rows_per_file={}, max_rows_per_group={}, compression='{}')",
@@ -316,22 +340,19 @@ impl LanceStorage {
         ))
     }
 
-    /// Get the output directory path
     fn get_output_dir(&self) -> String {
         self.output_dir.to_string_lossy().to_string()
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "LanceStorage(output_dir='{}')",
-            self.output_dir.display()
-        )
+        format!("LanceStorage(output_dir='{}')", self.output_dir.display())
     }
 }
 
 /// Python module definition
 #[pymodule]
 fn genestore(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    init();
     m.add_class::<StorageBuilder>()?;
     m.add_class::<LanceStorage>()?;
 
