@@ -297,7 +297,7 @@ impl LanceStorageAsync {
 
         future_into_py(py, async move {
             let vec2d = inner.load_core(name).await?;
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 PyArray2::from_vec2(py, &vec2d)
                     .map(|arr| arr.into_any().unbind())
                     .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))
@@ -339,7 +339,7 @@ impl LanceStorage {
 
         future_into_py(py, async move {
             let vec2d = inner.load_core(name).await?;
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 PyArray2::from_vec2(py, &vec2d)
                     .map(|arr| arr.into_any().unbind())
                     .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))
@@ -359,7 +359,7 @@ impl LanceStorage {
         let inner = self.inner.clone();
         let (rows, cols, data_col_major) = numpy_to_col_major(&array)?;
 
-        py.allow_threads(|| {
+        py.detach(|| {
             get_runtime().block_on(async move { inner.store_core(name, rows, cols, data_col_major).await })
         })
     }
@@ -368,7 +368,7 @@ impl LanceStorage {
     fn load(&self, py: Python<'_>, name: String) -> PyResult<Py<PyAny>> {
         let inner = self.inner.clone();
 
-        let vec2d = py.allow_threads(|| get_runtime().block_on(async move { inner.load_core(name).await }))?;
+        let vec2d = py.detach(|| get_runtime().block_on(async move { inner.load_core(name).await }))?;
 
         PyArray2::from_vec2(py, &vec2d)
             .map(|arr| arr.into_any().unbind())
