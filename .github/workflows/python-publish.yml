@@ -27,16 +27,21 @@ jobs:
           python -m pip install -U pip
           python -m pip install pytest maturin
 
+      # Only run tests for native x86_64 builds, skip cross-compilation targets
       - name: Build (develop) for tests
+        if: matrix.target == 'x86_64'
         run: |
           maturin develop --release
 
       - name: Run tests
+        if: matrix.target == 'x86_64'
         run: |
           pytest tests/
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
