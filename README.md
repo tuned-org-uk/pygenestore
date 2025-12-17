@@ -1,6 +1,6 @@
 # pygenestore
 
-Store your `numpy` arrays at scale using the Lance format.
+Store your `numpy` arrays at scale using the Lance format. Handles millions of rows as far as the memory goes.
 
 ## Usage
 
@@ -8,6 +8,39 @@ It is possible to create multiple storages by passing different directories to `
 
 It is possible to store different arrays in the same storage, just set different names.
 
+### Default API (blocking)
+```python
+import numpy as np
+import genestore
+
+# Configure storage
+builder = genestore.store_array("./lance_data")
+builder.with_max_rows_per_file(500_000)
+builder.with_compression("zstd")
+
+# Build storage instance
+storage = builder.build()
+
+# Create data (2D float64 numpy array)
+np.random.seed(42)
+x = np.random.randn(1000, 128).astype(np.float64)
+
+# Store (blocking)
+path = storage.store(x, "my_dataset")
+print("Stored at:", path)
+
+# Load (blocking)
+y = storage.load("my_dataset")
+print("Loaded shape:", y.shape)
+
+# Verify roundtrip
+assert np.allclose(x, y)
+assert np.array_equal(x, y)
+print("✓ Data verification passed")
+```
+
+
+### Async API
 ```python
 import numpy as np
 import genestore
@@ -27,11 +60,11 @@ async def main():
     data = np.random.randn(1000, 128).astype(np.float64)
 
     # Store the array (await the async call)
-    path = await storage.store(data, "my_dataset")
+    path = await storage.aio.store(data, "my_dataset")
     print(f"Storage at: {path}")
 
     # Load the array back using the NAME (not path)
-    loaded_data = await storage.load("my_dataset")
+    loaded_data = await storage.aio.load("my_dataset")
     print(f"Loaded shape: {loaded_data.shape}")
 
     # Verify the data
