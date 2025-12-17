@@ -18,8 +18,6 @@ def out_dir(tmp_path):
 
 @pytest.mark.asyncio
 async def test_basic():
-    import genestore
-
     # Create a storage builder and configure it
     builder = genestore.store_array(f"./lance_data/{uuid.uuid4().hex}")
     builder.with_max_rows_per_file(500000)
@@ -33,11 +31,11 @@ async def test_basic():
     data = np.random.randn(1000, 128).astype(np.float64)
 
     # Store the array (await the async call)
-    path = await storage.store(data, "my_dataset")
+    path = await storage.aio.store(data, "my_dataset")
     print(f"Stored at: {path}")
 
     # Load the array back using the NAME (not path)
-    loaded_data = await storage.load("my_dataset")
+    loaded_data = await storage.aio.load("my_dataset")
     print(f"Loaded shape: {loaded_data.shape}")
 
     assert path
@@ -66,8 +64,6 @@ async def test_basic():
 
 @pytest.mark.asyncio
 async def test_basic_double_store():
-    import genestore
-
     # Create a storage builder and configure it
     builder = genestore.store_array(f"./lance_data/{uuid.uuid4().hex}")
     builder.with_max_rows_per_file(500000)
@@ -82,12 +78,12 @@ async def test_basic_double_store():
     data2 = np.random.randn(1000, 128).astype(np.float64)
 
     # Store the array (await the async call)
-    path1 = await storage.store(data1, "my_dataset_1")
-    path2 = await storage.store(data2, "my_dataset_2")
+    path1 = await storage.aio.store(data1, "my_dataset_1")
+    path2 = await storage.aio.store(data2, "my_dataset_2")
 
     # Load the array back using the NAME (not path)
-    loaded_data1 = await storage.load("my_dataset_1")
-    loaded_data2 = await storage.load("my_dataset_2")
+    loaded_data1 = await storage.aio.load("my_dataset_1")
+    loaded_data2 = await storage.aio.load("my_dataset_2")
     print(f"Loaded shape: {loaded_data1.shape}")
 
     assert path1 == path2
@@ -124,10 +120,10 @@ async def test_store_and_load_roundtrip(out_dir):
     x = np.random.randn(64, 32).astype(np.float64)
     name = "roundtrip"
 
-    path = await storage.store(x, name)
+    path = await storage.aio.store(x, name)
     assert isinstance(path, str)
 
-    y = await storage.load(name)
+    y = await storage.aio.load(name)
     assert isinstance(y, np.ndarray)
     assert y.shape == x.shape
     assert np.allclose(x, y)
@@ -140,7 +136,7 @@ async def test_store_rejects_empty_array(out_dir):
     x = np.zeros((0, 0), dtype=np.float64)
 
     with pytest.raises(Exception) as e:
-        await storage.store(x, "empty")
+        await storage.aio.store(x, "empty")
 
     msg = str(e.value).lower()
     assert ("empty" in msg) or ("non-zero" in msg) or ("non zero" in msg)
@@ -155,7 +151,7 @@ async def test_store_rejects_non_finite(out_dir):
     x[1, 1] = np.inf
 
     with pytest.raises(Exception) as e:
-        await storage.store(x, "bad")
+        await storage.aio.store(x, "bad")
 
     msg = str(e.value)
     assert ("non-finite" in msg) or ("NaN" in msg) or ("Inf" in msg) or ("infinite" in msg.lower())
@@ -172,14 +168,14 @@ async def test_multiple_instances_isolated(out_dir):
 
     print(f"{x1} \n {x2}")
 
-    p1 = await s1.store(x1, "m1")
-    p2 = await s1.store(x2, "m2")
+    p1 = await s1.aio.store(x1, "m1")
+    p2 = await s1.aio.store(x2, "m2")
 
     assert p1 == p2
     assert os.path.exists(p1)
 
-    y1 = await s1.load("m1")
-    y2 = await s1.load("m2")
+    y1 = await s1.aio.load("m1")
+    y2 = await s1.aio.load("m2")
 
     print(f"{y1} \n {y2}")
 

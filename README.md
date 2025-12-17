@@ -4,6 +4,10 @@ Store your `numpy` arrays at scale using the Lance format.
 
 ## Usage
 
+It is possible to create multiple storages by passing different directories to `create_storage`.
+
+It is possible to store different arrays in the same storage, just set different names.
+
 ```python
 import numpy as np
 import genestore
