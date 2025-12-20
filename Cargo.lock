@@ -2331,9 +2331,9 @@ dependencies = [
 
 [[package]]
 name = "genegraph-storage"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fc699b7338f7f70f475c034741d555b58cd23fc76e6915a7fbb0be9f5d9f934"
+checksum = "2d8c5802ac1e296b462887dbc62a1bc4aec6bfebad475162526560f4f3ef2145"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -4450,12 +4450,13 @@ dependencies = [
 
 [[package]]
 name = "pygenestore"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "approx 0.5.1",
  "env_logger",
  "genegraph-storage",
  "log",
+ "ndarray 0.17.1",
  "numpy",
  "pyo3",
  "pyo3-async-runtimes",

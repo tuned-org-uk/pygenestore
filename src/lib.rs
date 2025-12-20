@@ -6,7 +6,7 @@ use genegraph_storage::traits::backend::StorageBackend;
 use genegraph_storage::traits::metadata::Metadata;
 
 use log::{debug, info};
-use numpy::{PyArray2, PyReadonlyArray2};
+use numpy::{PyArray2, PyArrayLike2, PyReadonlyArray2};
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
@@ -37,8 +37,9 @@ struct LanceStorageInner {
 }
 
 /// Helper: validate array and convert numpy row-major -> col-major Vec<f64>.
-fn numpy_to_col_major(array: &PyReadonlyArray2<'_, f64>) -> PyResult<(usize, usize, Vec<f64>)> {
-    let array_view = array.as_array();
+fn numpy_to_col_major_from_view(
+    array_view: &ndarray::ArrayView2<'_, f64>,
+) -> PyResult<(usize, usize, Vec<f64>)> {
     let shape = array_view.shape();
     let rows = shape[0];
     let cols = shape[1];
@@ -63,7 +64,7 @@ Please clean your data before storing.",
         )));
     }
 
-    // Convert row-major (numpy default) to column-major (smartcore convention used here)
+    // Convert row-major to column-major
     let mut data_col_major: Vec<f64> = vec![0.0; rows * cols];
     for r in 0..rows {
         for c in 0..cols {
@@ -85,16 +86,13 @@ impl LanceStorageInner {
         let output_dir = self.output_dir.clone();
 
         let mut new_storage = true;
-        let (check_exist, _) =
-            LanceStorageGraph::exists(&output_dir.to_string_lossy().to_string());
+        let (check_exist, _) = LanceStorageGraph::exists(&output_dir.to_string_lossy().to_string());
 
         let (storage, mut metadata) = if !check_exist {
             info!("creating new storage at {:?}", output_dir);
 
-            let storage = LanceStorageGraph::new(
-                output_dir.to_string_lossy().to_string(),
-                name.to_string(),
-            );
+            let storage =
+                LanceStorageGraph::new(output_dir.to_string_lossy().to_string(), name.to_string());
 
             let md = GeneMetadata::seed_metadata(&name, rows, cols, &storage)
                 .await
@@ -142,12 +140,9 @@ impl LanceStorageInner {
                 .await
                 .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
 
-            storage
-                .load_metadata()
-                .await
-                .map_err(|e| {
-                    PyException::new_err(format!("Failed to load existing metadata: {}", e))
-                })?
+            storage.load_metadata().await.map_err(|e| {
+                PyException::new_err(format!("Failed to load existing metadata: {}", e))
+            })?
         };
 
         Ok(metadata_path.to_string_lossy().to_string())
@@ -156,14 +151,15 @@ impl LanceStorageInner {
     async fn load_core(&self, name: String) -> PyResult<Vec<Vec<f64>>> {
         let output_dir = self.output_dir.clone();
 
-        let (storage, metadata) = LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
-            .await
-            .map_err(|e| {
-                PyException::new_err(format!(
-                    "Failed to spawn storage (metadata missing?): {}",
-                    e
-                ))
-            })?;
+        let (storage, metadata) =
+            LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
+                .await
+                .map_err(|e| {
+                    PyException::new_err(format!(
+                        "Failed to spawn storage (metadata missing?): {}",
+                        e
+                    ))
+                })?;
 
         let key = if metadata.files.get(&name).is_some() {
             name.clone()
@@ -171,12 +167,9 @@ impl LanceStorageInner {
             "rawinput".to_string()
         };
 
-        let matrix = storage
-            .load_dense(&key)
-            .await
-            .map_err(|e| {
-                PyException::new_err(format!("Failed to load dense matrix '{}': {}", &key, e))
-            })?;
+        let matrix = storage.load_dense(&key).await.map_err(|e| {
+            PyException::new_err(format!("Failed to load dense matrix '{}': {}", &key, e))
+        })?;
 
         let (rows, cols) = matrix.shape();
 
@@ -282,13 +275,16 @@ impl LanceStorageAsync {
     fn store<'py>(
         &self,
         py: Python<'py>,
-        array: PyReadonlyArray2<'py, f64>,
+        array: PyArrayLike2<'_, f64>,
         name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let (rows, cols, data_col_major) = numpy_to_col_major(&array)?;
+        let readonly_array = array.as_array();
+        let (rows, cols, data_col_major) = numpy_to_col_major_from_view(&readonly_array)?;
 
-        future_into_py(py, async move { inner.store_core(name, rows, cols, data_col_major).await })
+        future_into_py(py, async move {
+            inner.store_core(name, rows, cols, data_col_major).await
+        })
     }
 
     #[pyo3(signature = (name))]
@@ -300,7 +296,9 @@ impl LanceStorageAsync {
             Python::attach(|py| {
                 PyArray2::from_vec2(py, &vec2d)
                     .map(|arr| arr.into_any().unbind())
-                    .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))
+                    .map_err(|e| {
+                        PyException::new_err(format!("Failed to create numpy array: {}", e))
+                    })
             })
         })
     }
@@ -324,13 +322,16 @@ impl LanceStorage {
     fn store_async<'py>(
         &self,
         py: Python<'py>,
-        array: PyReadonlyArray2<'py, f64>,
+        array: PyArrayLike2<'_, f64>,
         name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let (rows, cols, data_col_major) = numpy_to_col_major(&array)?;
+        let readonly_array = array.as_array();
+        let (rows, cols, data_col_major) = numpy_to_col_major_from_view(&readonly_array)?;
 
-        future_into_py(py, async move { inner.store_core(name, rows, cols, data_col_major).await })
+        future_into_py(py, async move {
+            inner.store_core(name, rows, cols, data_col_major).await
+        })
     }
 
     #[pyo3(signature = (name))]
@@ -342,7 +343,9 @@ impl LanceStorage {
             Python::attach(|py| {
                 PyArray2::from_vec2(py, &vec2d)
                     .map(|arr| arr.into_any().unbind())
-                    .map_err(|e| PyException::new_err(format!("Failed to create numpy array: {}", e)))
+                    .map_err(|e| {
+                        PyException::new_err(format!("Failed to create numpy array: {}", e))
+                    })
             })
         })
     }
@@ -353,14 +356,16 @@ impl LanceStorage {
     fn store(
         &self,
         py: Python<'_>,
-        array: PyReadonlyArray2<'_, f64>,
+        array: PyArrayLike2<'_, f64>, // Changed from PyReadonlyArray2
         name: String,
     ) -> PyResult<String> {
         let inner = self.inner.clone();
-        let (rows, cols, data_col_major) = numpy_to_col_major(&array)?;
+        let readonly_array = array.as_array(); // Convert to readonly array
+        let (rows, cols, data_col_major) = numpy_to_col_major_from_view(&readonly_array)?;
 
         py.detach(|| {
-            get_runtime().block_on(async move { inner.store_core(name, rows, cols, data_col_major).await })
+            get_runtime()
+                .block_on(async move { inner.store_core(name, rows, cols, data_col_major).await })
         })
     }
 
@@ -368,7 +373,8 @@ impl LanceStorage {
     fn load(&self, py: Python<'_>, name: String) -> PyResult<Py<PyAny>> {
         let inner = self.inner.clone();
 
-        let vec2d = py.detach(|| get_runtime().block_on(async move { inner.load_core(name).await }))?;
+        let vec2d =
+            py.detach(|| get_runtime().block_on(async move { inner.load_core(name).await }))?;
 
         PyArray2::from_vec2(py, &vec2d)
             .map(|arr| arr.into_any().unbind())
@@ -401,7 +407,10 @@ impl LanceStorage {
     }
 
     fn __repr__(&self) -> String {
-        format!("LanceStorage(output_dir='{}')", self.inner.output_dir.display())
+        format!(
+            "LanceStorage(output_dir='{}')",
+            self.inner.output_dir.display()
+        )
     }
 }
 
