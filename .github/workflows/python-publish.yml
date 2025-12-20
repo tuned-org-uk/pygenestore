@@ -27,6 +27,12 @@ jobs:
           python -m pip install -U pip
           python -m pip install pytest maturin
 
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+
       # Only run tests for native x86_64 builds, skip cross-compilation targets
       - name: Build (develop) for tests
         if: matrix.target == 'x86_64'
