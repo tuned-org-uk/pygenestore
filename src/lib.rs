@@ -85,12 +85,10 @@ impl LanceStorageInner {
     ) -> PyResult<String> {
         let output_dir = self.output_dir.clone();
 
-        let mut new_storage = true;
         let (check_exist, _) = LanceStorageGraph::exists(&output_dir.to_string_lossy().to_string());
 
-        let (storage, mut metadata) = if !check_exist {
+        let (storage, metadata) = if !check_exist {
             info!("creating new storage at {:?}", output_dir);
-
             let storage =
                 LanceStorageGraph::new(output_dir.to_string_lossy().to_string(), name.to_string());
 
@@ -101,9 +99,7 @@ impl LanceStorageInner {
             (storage, md)
         } else {
             info!("spawning storage at {:?}", output_dir);
-            new_storage = false;
-
-            LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
+             LanceStorageGraph::spawn(output_dir.to_string_lossy().to_string())
                 .await
                 .map_err(|e| {
                     PyException::new_err(format!(
@@ -118,32 +114,10 @@ impl LanceStorageInner {
 
         let metadata_path = storage.metadata_path();
 
-        let _metadata = if new_storage {
-            storage
-                .save_dense("rawinput", &matrix, &metadata_path)
-                .await
-                .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
-            metadata
-        } else {
-            metadata.files.insert(
-                name.to_string(),
-                metadata.new_fileinfo(&name, "dense", matrix.shape(), None, None),
-            );
-
-            storage
-                .save_metadata(&metadata)
-                .await
-                .map_err(|e| PyException::new_err(format!("Failed to save metadata: {}", e)))?;
-
-            storage
-                .save_dense(&name, &matrix, &metadata_path)
-                .await
-                .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
-
-            storage.load_metadata().await.map_err(|e| {
-                PyException::new_err(format!("Failed to load existing metadata: {}", e))
-            })?
-        };
+        storage
+            .save_dense(&name, &matrix, &metadata_path)
+            .await
+            .map_err(|e| PyException::new_err(format!("Failed to save dense matrix: {}", e)))?;
 
         Ok(metadata_path.to_string_lossy().to_string())
     }

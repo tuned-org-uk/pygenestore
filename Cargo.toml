@@ -1,6 +1,6 @@
 [package]
 name = "pygenestore"
-version = "0.5.0"
+version = "0.10.0"
 edition = "2024"
 description = "Numpy arrays to Lance storage format"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
@@ -42,7 +42,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.27.2", features = ["extension-module"] }
 numpy = "0.27.1"
-genegraph-storage = "0.4.0"
+genegraph-storage = "0.10.0"
 pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 smartcore = "^0.4.8"
