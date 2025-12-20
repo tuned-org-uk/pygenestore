@@ -160,3 +160,76 @@ def test_multiple_instances_isolated_blocking(out_dir):
 
     assert np.array_equal(x1, y1)
     assert np.array_equal(x2, y2)
+
+
+def test_store_accepts_vstack_arrays_blocking(out_dir):
+    """Test that store() can handle arrays created with np.vstack()"""
+    storage = genestore.store_array(out_dir).build()
+
+    # Create multiple batches of embeddings (simulating batched processing)
+    np.random.seed(42)
+    batch1 = np.random.randn(100, 128).astype(np.float64)
+    batch2 = np.random.randn(100, 128).astype(np.float64)
+    batch3 = np.random.randn(100, 128).astype(np.float64)
+
+    # Stack them vertically using np.vstack (this creates a different array type)
+    stacked_embeddings = np.vstack([batch1, batch2, batch3])
+
+    # Verify the stacked array has expected shape
+    assert stacked_embeddings.shape == (300, 128)
+
+    # Store the vstack-created array (this should work without casting errors)
+    path = storage.store(stacked_embeddings, "vstacked_data")
+    assert isinstance(path, str)
+    assert os.path.exists(path)
+
+    # Load it back
+    loaded_data = storage.load("vstacked_data")
+    assert isinstance(loaded_data, np.ndarray)
+    assert loaded_data.shape == (300, 128)
+
+    # Verify data integrity
+    assert np.allclose(stacked_embeddings, loaded_data)
+    assert np.array_equal(stacked_embeddings, loaded_data)
+
+    # Verify individual batches are preserved correctly
+    assert np.array_equal(loaded_data[:100, :], batch1)
+    assert np.array_equal(loaded_data[100:200, :], batch2)
+    assert np.array_equal(loaded_data[200:, :], batch3)
+
+    print(f"✓ Successfully stored and loaded vstack array: {stacked_embeddings.shape}")
+
+
+def test_store_accepts_various_array_constructions_blocking(out_dir):
+    """Test that store() handles arrays created through different NumPy operations"""
+    storage = genestore.store_array(out_dir).build()
+
+    np.random.seed(99)
+    base_data = np.random.randn(50, 64).astype(np.float64)
+
+    # Test different array construction methods
+    test_cases = [
+        ("vstack", np.vstack([base_data, base_data])),
+        ("hstack", np.hstack([base_data, base_data])),
+        ("concatenate", np.concatenate([base_data, base_data], axis=0)),
+        ("copy", base_data.copy()),
+        ("slice", base_data[10:40, :]),
+        ("transpose_twice", base_data.T.T),
+    ]
+
+    for name, array in test_cases:
+        # Ensure array is contiguous and float64
+        array = np.ascontiguousarray(array, dtype=np.float64)
+
+        # Store the array
+        path = storage.store(array, f"array_{name}")
+        assert isinstance(path, str), f"Failed to store {name} array"
+
+        # Load it back
+        loaded = storage.load(f"array_{name}")
+        assert loaded.shape == array.shape, f"Shape mismatch for {name}"
+        assert np.array_equal(array, loaded), f"Data mismatch for {name}"
+
+        print(f"✓ {name}: {array.shape} stored and loaded successfully")
+
+    print("✓ All array construction methods handled correctly!")
