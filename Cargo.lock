@@ -5689,9 +5689,9 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "short-uuid"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58bea582e8f851430ff43e07edfc4c30b6a418f2ec4b6fed3f8496537e41a5df"
+checksum = "d5cb9a7452a33ab94fd48d5f533d181a400bf56ec5a55cf788c470ad430f52a5"
 dependencies = [
  "uuid",
 ]
